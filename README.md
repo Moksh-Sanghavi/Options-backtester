@@ -1,115 +1,167 @@
-# Nifty Options Backtester — Full-Stack Web Application
+# 📈 Nifty Options Backtester
 
-Asynchronous web app wrapping a production-grade Nifty 50 options backtesting
-engine (Wall Reversion + Opening Range Breakout strategies).
+A full-stack web application for backtesting **Nifty 50 options strategies** — wrapping a production-grade quant engine in an asynchronous API and a premium, interactive dashboard.
 
-## Stack
+<p align="center">
+  <img alt="Next.js" src="https://img.shields.io/badge/Next.js-16-black?logo=next.js">
+  <img alt="React" src="https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=white">
+  <img alt="FastAPI" src="https://img.shields.io/badge/FastAPI-async-009688?logo=fastapi&logoColor=white">
+  <img alt="Python" src="https://img.shields.io/badge/Python-3.12+-3776AB?logo=python&logoColor=white">
+  <img alt="Celery" src="https://img.shields.io/badge/Celery-Redis-37814A?logo=celery&logoColor=white">
+  <img alt="D3.js" src="https://img.shields.io/badge/D3.js-charts-F9A03C?logo=d3.js&logoColor=white">
+</p>
 
-| Layer        | Technology                                              |
-|--------------|---------------------------------------------------------|
-| Frontend     | Next.js (App Router), React, Tailwind, shadcn/ui, TradingView Lightweight Charts |
-| Backend      | FastAPI, Pydantic                                       |
-| Async compute| Celery + Redis                                          |
-| Data         | Pandas, PyArrow (Parquet)                               |
-| Ops          | Docker, Docker Compose                                  |
+---
 
-## Architecture
+## ✨ Features
+
+- **Two built-in strategies**
+  - **Wall Reversion** — detects implied-volatility anomalies across the option chain and trades reversions.
+  - **Opening Range Breakout (ORB)** — breakout entries with asymmetric, trend-aware position sizing.
+  - Run either alone or **combined**, with configurable capital, risk-per-trade, IV thresholds, and session timing.
+- **Asynchronous backtesting** — runs are queued to a Celery worker so the UI stays responsive, with **live "processing day N of M" progress**.
+- **Interactive Charts Explorer (D3.js)** — switch between **Equity Curve**, **Max Drawdown**, and **Spot Price Candlestick** views on one synchronized daily axis, with rich tooltips, a crosshair, and peak-drawdown markers.
+- **Full performance tear sheet** — 8 headline metrics (Total PnL, ROI, Max DD, Sharpe, win rates, profit factor) plus a paginated trade log with CE/PE and win/loss cues.
+- **Premium dark UI** — frosted-glass "terminal" aesthetic with realistic depth and light diffusion.
+- **Robust error handling** — readable validation errors, missing-dataset and empty-result states, all surfaced cleanly in the UI.
+- **One-command launch** on Windows *and* macOS, plus a Docker path.
+
+---
+
+## 🧱 Tech stack
+
+| Layer          | Technology                                                            |
+|----------------|----------------------------------------------------------------------|
+| Frontend       | Next.js 16 (App Router), React 19, Tailwind v4, shadcn/ui, **D3.js** |
+| Backend        | FastAPI, Pydantic                                                    |
+| Async compute  | Celery + Redis                                                       |
+| Data / quant   | Pandas, NumPy, SciPy, PyArrow (Parquet)                              |
+| Tooling        | Docker, Docker Compose                                               |
+
+---
+
+## 🏗️ Architecture
 
 ```
-Browser ──HTTP──> FastAPI (backend) ──enqueue──> Redis ──> Celery worker
-   ^                   |                                        |
-   └──── poll status ──┘                                        |
-                       └──────── results stored in Redis <──────┘
+Browser ──HTTP──> FastAPI (API) ──enqueue──> Redis ──> Celery worker
+   ▲                  │                                     │
+   └──── poll status ─┘                                     │ runs the engine
+                      └──────── results stored in Redis <───┘
 ```
 
-## Prerequisite — generate the Parquet dataset (once)
+The browser talks only to the Next.js server, which proxies `/api/*` to FastAPI — so a single origin serves the whole app (no CORS setup needed).
 
-The engine reads Parquet, not the raw CSVs. Convert them once:
+---
 
-```powershell
+## 🚀 Quick start
+
+### Prerequisites
+- **Python** 3.12+ (tested on 3.14)
+- **Node.js** 20+ (tested on 24)
+- **Redis** 5+
+
+### 1. Clone
+```bash
+git clone https://github.com/<your-username>/nifty-options-backtester.git
+cd nifty-options-backtester
+```
+> ✅ A sample dataset (`backend/data/*.parquet`, Dec 2023) is included, so you can run immediately after installing dependencies — no data prep required.
+
+### 2. Install dependencies
+```bash
+# Backend (Python)
 cd backend
-.\.venv\Scripts\Activate.ps1
-python -m scripts.convert_to_parquet --dataset dec2023
+python -m venv .venv
+# Windows:  .venv\Scripts\activate     |   macOS/Linux:  source .venv/bin/activate
+pip install -r requirements.txt
+cd ..
+
+# Frontend (Node)
+cd frontend
+npm install
+cd ..
 ```
 
-This writes `backend/data/options_dec2023.parquet` + `spot_dec2023.parquet`
-(defaults point at the source CSVs in `D:\Moksh\Options Bakctester`; override
-with `--options` / `--spot`). The same files feed both the native and Docker
-runs.
+### 3. Run
 
-## Running natively (no Docker / no admin)
+**One command (recommended):**
 
-This machine runs the stack natively with portable tooling (Docker requires
-admin + WSL2). Portable tools live in `C:\Users\intern\tools\`:
+| OS | Command |
+|----|---------|
+| **Windows** | `powershell -ExecutionPolicy Bypass -File start-all.ps1` (or double-click the desktop shortcut) |
+| **macOS**   | `./start-mac.command` (first time: `chmod +x start-mac.command stop-mac.command`) |
 
-| Tool  | Path                                              |
-|-------|---------------------------------------------------|
-| Node  | `C:\Users\intern\tools\node-v24.17.0-win-x64\`    |
-| Redis | `C:\Users\intern\tools\redis\`                    |
+This starts Redis, the API, the Celery worker, and the frontend, then opens the app. Stop everything with `stop-all.ps1` / `./stop-mac.command`.
 
-Node is on the user PATH. Start each service in its own terminal:
+**Or start each service manually** (4 terminals):
+```bash
+# 1. Redis
+redis-server
 
-```powershell
-# 1. Redis broker (leave running)
-C:\Users\intern\tools\redis\redis-server.exe
-
-# 2. FastAPI API
-backend\.venv\Scripts\Activate.ps1
+# 2. FastAPI  (activate the venv first)
 uvicorn app.main:app --reload --app-dir backend --host 0.0.0.0 --port 8000
 
-# 3. Celery worker
-backend\.venv\Scripts\Activate.ps1
-celery -A app.celery_app.celery worker --loglevel=info --pool=solo   # run from backend/
+# 3. Celery worker  (from backend/, venv active)
+celery -A app.celery_app.celery worker --loglevel=info --pool=solo
 
 # 4. Frontend
-cd frontend; npm run dev
+cd frontend && npm run dev
 ```
+> `--pool=solo` is required for Celery on Windows (the default prefork pool isn't supported there).
 
-- Frontend: http://localhost:3000
-- API docs: http://localhost:8000/docs
+- 🖥️ App: **http://localhost:3000**
+- 📚 API docs: **http://localhost:8000/docs**
 
-> `--pool=solo` is used for Celery on Windows (the default prefork pool is
-> unsupported there).
-
-## Quick start (Docker — requires Docker Desktop, which needs admin to install)
-
-After generating the Parquet dataset (above), bring the entire stack up with a
-single command — no `.env` required (service env vars are baked into the
-compose file; copy `.env.example` to `.env` only if you want to override them):
-
+### Or with Docker
 ```bash
 docker compose up --build
 ```
+Brings up Redis, API, worker, and frontend together (waits on healthchecks). Requires Docker Desktop.
 
-This starts Redis, the FastAPI API, the Celery worker, and the Next.js
-frontend. Compose waits for Redis and the API healthchecks before starting
-dependents.
+---
 
-- Frontend: http://localhost:3000
-- API docs: http://localhost:8000/docs
-
-## Error handling
-
-- Invalid requests (bad date format, `start_date` after `end_date`, out-of-range
-  config values, unknown `run_mode`) return **HTTP 422** with a single readable
-  `detail` message.
-- A missing dataset returns **HTTP 404**; unexpected server errors return a JSON
-  **HTTP 500** (never an HTML error page).
-- A failed Celery task surfaces via `status` → `FAILURE` with the error message.
-- The frontend renders all of these in an error panel + toast, and shows a
-  dedicated "no trades generated" state when a valid run produces no executions.
-
-## Project layout
+## 📂 Project structure
 
 ```
-backend/    FastAPI app, Celery tasks, refactored quant engine, Parquet converter
-frontend/   Next.js application
+backend/
+  app/
+    engine/        # the quant engine: strategy, execution, analytics, data, IV, costs
+    main.py        # FastAPI routes
+    tasks.py       # Celery task wrapping a backtest run
+    celery_app.py  # Celery + Redis config
+    schemas.py     # API request/response models
+  scripts/
+    convert_to_parquet.py   # CSV → Parquet converter
+  data/            # Parquet datasets (included)
+frontend/
+  src/
+    components/    # dashboard, config panel, charts-explorer (D3), tear sheet, trade log
+    hooks/         # backtest run/poll state machine
+    lib/           # typed API client, formatters, chart data
+start-all.ps1 / stop-all.ps1        # one-command launch (Windows)
+start-mac.command / stop-mac.command # one-command launch (macOS)
 ```
 
-## Build phases — all complete ✅
+---
 
-1. **Repo & environment init** — structure, deps, compose
-2. **Backend API & async queue** — engine refactor, Parquet, Celery, FastAPI routes
-3. **Frontend scaffolding & state** — layout, config form, polling hook
-4. **Visualization & analytics** — tear sheet, equity/drawdown charts, trade log
-5. **Error handling & containerization** — graceful errors, finalized Docker setup
+## 🔧 Extending it
+
+Adding a new dataset or a new strategy is documented step-by-step in
+**[extending_the_backtester_guide.md](extending_the_backtester_guide.md)**:
+
+- **New data** is essentially drop-in — run the converter with a new `--dataset` name and it auto-appears in the UI.
+- **New strategies** are a contained code change; the entire results pipeline (charts, metrics, trade log) is strategy-agnostic and works automatically once your strategy emits trades.
+
+Per-OS run details: **[nifty_backtester_run_guide.md](nifty_backtester_run_guide.md)** (Windows) · **[mac_run_guide.md](mac_run_guide.md)** (macOS).
+
+---
+
+## 📝 Notes
+
+- Transaction costs (brokerage, STT, exchange, GST, stamp duty) are modeled per NSE/NFO rates in `backend/app/engine/constants.py`.
+- Backtest runtime scales roughly linearly with the number of trading days; the worker runs single-threaded (`--pool=solo`).
+- The included data is a sample for demonstration; swap in your own via the converter.
+
+---
+
+<p align="center"><sub>Built with FastAPI · Celery · Next.js · D3.js</sub></p>
