@@ -16,7 +16,7 @@ class BacktestRequest(BaseModel):
     config: StrategyConfig = Field(default_factory=StrategyConfig)
     start_date: Optional[str] = Field(default=None, description="Inclusive ISO start date.")
     end_date: Optional[str] = Field(default=None, description="Inclusive ISO end date.")
-    dataset: str = Field(default="dec2023", min_length=1, description="Named dataset under DATA_DIR.")
+    dataset: str = Field(default="nifty", min_length=1, description="Named dataset under DATA_DIR.")
 
     @field_validator("start_date", "end_date")
     @classmethod
@@ -97,12 +97,40 @@ class TradeLogRow(BaseModel):
     exit_reason: str
 
 
+class BenchmarkPoint(BaseModel):
+    """One point on the Nifty buy-and-hold benchmark curve."""
+
+    date: str
+    equity: float
+
+
+class GreeksPoint(BaseModel):
+    """Aggregate portfolio Greeks (and the underlying ref) for one trading day."""
+
+    date: str
+    delta: float
+    gamma: float
+    theta: float
+    vega: float
+    spot: float
+
+
+class PresetCreate(BaseModel):
+    """Body for POST /api/presets — save a named strategy configuration."""
+
+    name: str = Field(min_length=1, max_length=80)
+    config: Dict[str, Any]
+
+
 class ResultsResponse(BaseModel):
     """Full results payload for GET /api/backtest/results/{task_id}."""
 
     task_id: str
     status: str
+    symbol: str = "NIFTY"
     metrics: Dict[str, Any]
     summary: Dict[str, Any]
     equity_curve: List[EquityPoint]
     trade_log: List[TradeLogRow]
+    benchmark: List[BenchmarkPoint] = []
+    greeks: List[GreeksPoint] = []

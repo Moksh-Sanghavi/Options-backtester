@@ -30,9 +30,15 @@ class Backtester:
         spot_path: str,
         config: StrategyConfig,
         stock_code: str = "NIFTY",
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
     ) -> None:
         self.config = config
-        self.dm = DataManager(options_path, spot_path, stock_code)
+        # Pass the range to the data layer so a partitioned (multi-year) dataset
+        # only loads the expiry partitions overlapping [start_date, end_date].
+        self.dm = DataManager(
+            options_path, spot_path, stock_code, start_date=start_date, end_date=end_date
+        )
         self.strategy = Strategy(config, self.dm)
         self.executor = ExecutionHandler(config, self.dm)
         self.tracker = PerformanceTracker(lot_size=config.lot_size)
@@ -78,7 +84,8 @@ class Backtester:
                 self.tracker.record_trade(trade)
                 logger.info(
                     f"  Day PnL: ₹{trade.total_pnl:+,.2f} | "
-                    f"Margin Used: ₹{trade.total_margin:,.0f} | Legs: {len(trade.legs)}"
+                    f"Peak Margin: ₹{trade.peak_margin_deployed:,.0f} | "
+                    f"Legs: {len(trade.legs)}"
                 )
 
             if progress_callback is not None:

@@ -13,6 +13,7 @@ import {
   BacktestRequest,
   ProgressInfo,
   ResultsResponse,
+  TaskState,
   getBacktestResults,
   getBacktestStatus,
   startBacktest,
@@ -27,6 +28,13 @@ export interface UseBacktestState {
   progress: ProgressInfo | null;
   results: ResultsResponse | null;
   error: string | null;
+  /**
+   * The latest raw Celery task state while running. Lets the UI tell a task
+   * still waiting in the queue (`PENDING` — another run is ahead of it) apart
+   * from one a worker has already picked up and is warming up (`STARTED` /
+   * `PROGRESS`). Null when idle.
+   */
+  runState: TaskState | null;
 }
 
 const POLL_INTERVAL_MS = 1200;
@@ -38,6 +46,7 @@ export function useBacktest() {
     progress: null,
     results: null,
     error: null,
+    runState: null,
   });
 
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -67,8 +76,25 @@ export function useBacktest() {
       progress: null,
       results: null,
       error: null,
+      runState: null,
     });
   }, [clearPolling]);
+
+  /** Load a finished results payload directly (e.g. reopening a stored run). */
+  const loadResults = useCallback(
+    (results: ResultsResponse, taskId: string | null = null) => {
+      clearPolling();
+      setState({
+        phase: "success",
+        taskId,
+        progress: { current: 1, total: 1, percent: 100 },
+        results,
+        error: null,
+        runState: "SUCCESS",
+      });
+    },
+    [clearPolling],
+  );
 
   /** Submit a backtest and begin polling for completion. */
   const run = useCallback(
@@ -80,6 +106,9 @@ export function useBacktest() {
         progress: null,
         results: null,
         error: null,
+        // Let the first status poll classify queued vs warming-up, so a run
+        // that starts immediately doesn't flash a misleading "Queued".
+        runState: null,
       });
 
       let taskId: string;
@@ -103,6 +132,10 @@ export function useBacktest() {
         try {
           const status = await getBacktestStatus(taskId);
           if (!mountedRef.current) return;
+
+          // Always reflect the raw Celery state so the UI can show "queued"
+          // (PENDING) vs "warming up" (STARTED / PROGRESS with no days yet).
+          setState((s) => ({ ...s, runState: status.status }));
 
           if (status.status === "PROGRESS") {
             setState((s) => ({ ...s, progress: status.progress }));
@@ -143,5 +176,5 @@ export function useBacktest() {
     [clearPolling],
   );
 
-  return { ...state, run, reset };
+  return { ...state, run, reset, loadResults };
 }

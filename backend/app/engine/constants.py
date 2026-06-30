@@ -39,6 +39,7 @@ class StrategyType(str, Enum):
 
     WALL_REVERSION = "Wall Reversion"
     ORB = "Opening Range Breakout"
+    SHORT_STRADDLE = "Short Straddle"
 
 
 class RunMode(str, Enum):

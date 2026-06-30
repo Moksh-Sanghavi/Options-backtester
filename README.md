@@ -65,7 +65,7 @@ The browser talks only to the Next.js server, which proxies `/api/*` to FastAPI 
 git clone https://github.com/<your-username>/nifty-options-backtester.git
 cd nifty-options-backtester
 ```
-> ✅ A sample dataset (`backend/data/*.parquet`, Dec 2023) is included, so you can run immediately after installing dependencies — no data prep required.
+> ℹ️ The app uses the multi-year **`nifty`** dataset (Jan 2023 – Feb 2026). It's too large to commit, so generate it once from the raw CSVs with the converter — see [Multi-year dataset](#multi-year-dataset-jan-2023--feb-2026) below — before the first run.
 
 ### 2. Install dependencies
 ```bash
@@ -153,6 +153,30 @@ Adding a new dataset or a new strategy is documented step-by-step in
 - **New strategies** are a contained code change; the entire results pipeline (charts, metrics, trade log) is strategy-agnostic and works automatically once your strategy emits trades.
 
 Per-OS run details: **[nifty_backtester_run_guide.md](nifty_backtester_run_guide.md)** (Windows) · **[mac_run_guide.md](mac_run_guide.md)** (macOS).
+
+### Multi-year dataset (Jan 2023 – Feb 2026)
+
+The bundled `dec2023` sample is a single month. To use the full three-year,
+1-minute dataset, place the raw CSVs at the repo root:
+
+- `Options Data (Monthly Expiries from Jan 2023 - Feb 2026)/NIFTY_<expiry>.csv` — one file per monthly expiry
+- `Spot (Jan 2023 - Feb 2026).csv` — spot OHLCV + `ATM_Strike`
+
+Then convert once (from `backend/`, venv active):
+
+```bash
+python -m scripts.convert_to_parquet          # uses the bundled paths → dataset "nifty"
+```
+
+This writes a **partitioned** Parquet dataset — `data/options_nifty/expiry=YYYY-MM-DD/data.parquet`
+per expiry, plus a minute-aligned `data/spot_nifty.parquet`. Both are git-ignored
+(too large to commit) and regenerated from the CSVs.
+
+Because the options data is partitioned by expiry, a backtest **only loads the
+expiry partitions that overlap its date range** — a one-month run reads a single
+~100 MB partition rather than the multi-GB whole. Pick the range with the
+calendar pickers (bounded to Jan 2023 – Feb 2026); the **Target Expiry** dropdown
+auto-populates with the expiries available for that range.
 
 ---
 

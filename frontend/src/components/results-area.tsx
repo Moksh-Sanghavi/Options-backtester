@@ -6,9 +6,11 @@
  * (headline performance tiles). The detailed equity/drawdown charts and the
  * trade-log table are layered in during Phase 4.
  */
+import { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
   BarChart3,
+  Clock,
   Gauge,
   LineChart,
   Loader2,
@@ -18,10 +20,12 @@ import {
 
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
+import { AnalyticsPanel } from "@/components/analytics-panel";
 import { ChartsExplorer } from "@/components/charts-explorer";
+import { GreeksPanel } from "@/components/greeks-panel";
 import { TradeLogTable } from "@/components/trade-log-table";
 import { DEFAULT_ANCHORS } from "@/lib/charts-data";
-import { ProgressInfo, ResultsResponse } from "@/lib/api";
+import { ProgressInfo, ResultsResponse, TaskState } from "@/lib/api";
 import {
   formatINRCompact,
   formatNumber,
@@ -36,6 +40,7 @@ interface ResultsAreaProps {
   progress: ProgressInfo | null;
   results: ResultsResponse | null;
   error: string | null;
+  runState: TaskState | null;
   onReset: () => void;
 }
 
@@ -44,10 +49,12 @@ export function ResultsArea({
   progress,
   results,
   error,
+  runState,
   onReset,
 }: ResultsAreaProps) {
   if (phase === "idle") return <IdleState />;
-  if (phase === "running") return <RunningState progress={progress} />;
+  if (phase === "running")
+    return <RunningState progress={progress} runState={runState} />;
   if (phase === "error") return <ErrorState error={error} onReset={onReset} />;
   if (phase === "success" && results) return <SuccessState results={results} />;
   return <IdleState />;
@@ -61,14 +68,15 @@ function IdleState() {
         <div className="flex size-12 shrink-0 items-center justify-center rounded-2xl bg-primary/10 text-primary ring-1 ring-primary/20">
           <BarChart3 className="size-6" />
         </div>
-        <div>
+        <div className="flex-1">
           <h2 className="text-gradient text-xl font-semibold tracking-tight">
             Performance Explorer
           </h2>
-          <p className="mt-1 max-w-md text-sm text-muted-foreground">
+          {/* Changed to max-w-3xl for the optimal reading width */}
+          <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
             Configure your strategy on the left and run a simulation to generate
             a live tear sheet. Below is a sample of the interactive charts you’ll
-            get — switch between equity, drawdown and spot price.
+            get. You can switch between equity, drawdown and spot price, and can even choose multiple charts together.
           </p>
         </div>
       </div>
@@ -79,35 +87,86 @@ function IdleState() {
 }
 
 /* ── Running ──────────────────────────────────────────────────────────── */
-function RunningState({ progress }: { progress: ProgressInfo | null }) {
+function RunningState({
+  progress,
+  runState,
+}: {
+  progress: ProgressInfo | null;
+  runState: TaskState | null;
+}) {
   const percent = progress?.percent ?? 0;
   const hasDays = (progress?.total ?? 0) > 0;
+  const elapsed = useElapsed();
+
+  // PENDING/RETRY mean the task is still sitting in the queue — a worker hasn't
+  // picked it up yet (typically another backtest is running ahead of it). Once
+  // a worker takes it, it's STARTED/PROGRESS: warming up (loading data) until
+  // the first day count arrives, then processing days.
+  const queued = !hasDays && (runState === "PENDING" || runState === "RETRY");
+
+  const title = queued ? "Queued" : "Running simulation";
+  const detail = hasDays
+    ? `Processing day ${progress?.current} of ${progress?.total}`
+    : queued
+      ? "Waiting for a free worker — another backtest is running ahead of this one."
+      : "Warming up the engine — loading market data…";
 
   return (
     <div className="flex h-full flex-col items-center justify-center gap-6">
       <div className="glass-panel w-full max-w-md rounded-2xl p-8">
         <div className="flex items-center gap-3">
-          <Loader2 className="size-5 animate-spin text-primary" />
+          {queued ? (
+            <Clock className="size-5 animate-pulse text-muted-foreground" />
+          ) : (
+            <Loader2 className="size-5 animate-spin text-primary" />
+          )}
           <div>
-            <p className="text-sm font-semibold">Running simulation</p>
-            <p className="text-xs text-muted-foreground">
-              {hasDays
-                ? `Processing day ${progress?.current} of ${progress?.total}`
-                : "Queued — warming up the engine…"}
-            </p>
+            <p className="text-sm font-semibold">{title}</p>
+            <p className="text-xs text-muted-foreground">{detail}</p>
           </div>
-          <span className="nums font-heading ml-auto text-2xl font-semibold tabular-nums text-primary">
-            {Math.round(percent)}%
-          </span>
+          {queued ? (
+            <span className="ml-auto rounded-full bg-muted/50 px-2.5 py-1 text-[11px] font-medium text-muted-foreground ring-1 ring-border">
+              In queue
+            </span>
+          ) : (
+            <span className="nums font-heading ml-auto text-2xl font-semibold tabular-nums text-primary">
+              {Math.round(percent)}%
+            </span>
+          )}
         </div>
 
         <Progress
-          value={percent}
+          value={queued ? 0 : percent}
           className={cn("mt-5", !hasDays && "animate-pulse")}
         />
+
+        <p className="mt-3 text-center text-xs text-muted-foreground">
+          Elapsed {formatElapsed(elapsed)}
+          {queued
+            ? " · it'll start automatically when the worker frees up"
+            : hasDays && " · large date ranges can take a few minutes"}
+        </p>
       </div>
     </div>
   );
+}
+
+/** Seconds elapsed since the component mounted (ticks every second). */
+function useElapsed(): number {
+  const [seconds, setSeconds] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setSeconds((s) => s + 1), 1000);
+    return () => clearInterval(id);
+  }, []);
+  return seconds;
+}
+
+/** Format a second count as `m:ss` (or `s` under a minute). */
+function formatElapsed(total: number): string {
+  if (total < 60) return `${total}s`;
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return `${m}:${String(s).padStart(2, "0")}`;
 }
 
 /* ── Error ────────────────────────────────────────────────────────────── */
@@ -179,6 +238,30 @@ function MetricTile({ label, value, icon: Icon, tone = "neutral", sub }: TilePro
 
 function SuccessState({ results }: { results: ResultsResponse }) {
   const s = results.summary;
+  // Shared "active day" so hovering the Equity/Drawdown curve crosshairs the
+  // Greeks panel on the same date (and vice-versa).
+  const [hoverDate, setHoverDate] = useState<string | null>(null);
+
+  // Memoise the derived chart inputs so a hover (which re-renders this component
+  // via setHoverDate) doesn't hand ChartsExplorer fresh object/array identities —
+  // that would re-fire its D3 draw effect and re-animate the curves every move.
+  const chartAnchors = useMemo(
+    () => ({
+      initialCapital: s?.initial_capital ?? 0,
+      totalPnl: s?.total_pnl ?? 0,
+      maxDrawdown: Math.abs(s?.max_drawdown_inr ?? 0),
+    }),
+    [s?.initial_capital, s?.total_pnl, s?.max_drawdown_inr],
+  );
+  const equityDates = useMemo(
+    () => results.equity_curve.map((p) => p.date),
+    [results.equity_curve],
+  );
+  const equityValues = useMemo(
+    () => results.equity_curve.map((p) => p.equity),
+    [results.equity_curve],
+  );
+  const greeksData = results.greeks ?? [];
 
   // A valid run that simply produced no trades for the chosen parameters.
   if (!s || s.total_trades === undefined || results.trade_log.length === 0) {
@@ -212,20 +295,13 @@ function SuccessState({ results }: { results: ResultsResponse }) {
         </p>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
         <MetricTile
           label="Total PnL"
           value={formatSigned(s.total_pnl)}
           sub={`${formatNumber(s.total_pnl_points, 0)} pts`}
           icon={pnlTone === "positive" ? TrendingUp : TrendingDown}
           tone={pnlTone}
-        />
-        <MetricTile
-          label="Return on Capital"
-          value={formatPct(s.return_on_capital_pct)}
-          sub={`Final ${formatINRCompact(s.final_equity)}`}
-          icon={TrendingUp}
-          tone={s.return_on_capital_pct >= 0 ? "positive" : "negative"}
         />
         <MetricTile
           label="Max Drawdown"
@@ -245,11 +321,6 @@ function SuccessState({ results }: { results: ResultsResponse }) {
           icon={BarChart3}
         />
         <MetricTile
-          label="Daily Win Rate"
-          value={formatPct(s.daily_win_rate)}
-          icon={BarChart3}
-        />
-        <MetricTile
           label="Profit Factor"
           value={s.profit_factor === null ? "∞" : formatNumber(s.profit_factor, 2)}
           icon={Gauge}
@@ -262,14 +333,21 @@ function SuccessState({ results }: { results: ResultsResponse }) {
       </div>
 
       <ChartsExplorer
-        anchors={{
-          initialCapital: s.initial_capital,
-          totalPnl: s.total_pnl,
-          maxDrawdown: Math.abs(s.max_drawdown_inr),
-        }}
-        realDates={results.equity_curve.map((p) => p.date)}
-        realEquity={results.equity_curve.map((p) => p.equity)}
+        anchors={chartAnchors}
+        symbol={results.symbol}
+        realDates={equityDates}
+        realEquity={equityValues}
+        onHoverDate={setHoverDate}
       />
+
+      <GreeksPanel
+        greeks={greeksData}
+        symbol={results.symbol}
+        syncDate={hoverDate}
+        onHoverDate={setHoverDate}
+      />
+
+      <AnalyticsPanel results={results} />
 
       <DetailedMetrics metrics={results.metrics} />
 

@@ -34,6 +34,13 @@ class TradeLeg:
     trailing_sl_pct: float = 0.15
     take_profit_pct: float = 999.0
 
+    # Per-leg exit governors (set by the strategy; read by the execution engine).
+    # ``max_hold_bars`` force-exits the leg after that many managed 1-min bars.
+    # ``square_off_time`` force-exits the leg at a fixed time of day (e.g. a Short
+    # Straddle squaring off at 14:45 independently of the global exit time).
+    max_hold_bars: int = 375
+    square_off_time: Optional[pd.Timestamp] = None
+
     # State
     status: LegStatus = field(default=LegStatus.OPEN)
     exit_time: Optional[pd.Timestamp] = None
@@ -136,6 +143,21 @@ class Trade:
     date: pd.Timestamp
     legs: List[TradeLeg] = field(default_factory=list)
 
+    # Pre-built ORB dynamic re-entry candidates (fresh breakouts later in the day).
+    # The execution engine activates the next one whose breakout falls after a
+    # stop-out; see Strategy._build_orb_legs / ExecutionHandler._next_orb_reentry.
+    orb_reentry_candidates: List[TradeLeg] = field(default_factory=list)
+
+    # Pre-built Wall Reversion re-entry candidates (fresh IV anomaly signals after
+    # the initial entry). Activated by ExecutionHandler._next_wall_reentry on stop-out.
+    wall_reentry_candidates: List[TradeLeg] = field(default_factory=list)
+
+    # Peak *concurrent* margin actually deployed during the day, set by the
+    # execution engine. Unlike ``total_margin`` (which sums every leg ever opened,
+    # including closed re-entries), this tracks live capital at risk second-by-
+    # second and so respects the daily margin ceiling even with re-entries on.
+    peak_margin_deployed: float = 0.0
+
     @property
     def is_open(self) -> bool:
         """True while any leg remains open."""
@@ -148,7 +170,15 @@ class Trade:
 
     @property
     def total_margin(self) -> float:
-        """Total margin blocked across legs."""
+        """Margin required by the *initial* legs (gross sum across all legs).
+
+        NOTE: this is a gross sum and double-counts capital that is recycled
+        across re-entries (a stopped-out leg frees its margin before the next
+        entry reuses it). For the true ceiling-respecting figure use
+        ``peak_margin_deployed``, which the execution engine measures live.
+        Kept for the pre-trade affordability check, where only initial legs
+        exist and the sum equals the day's opening deployment.
+        """
         return sum(leg.margin_blocked for leg in self.legs)
 
     @property

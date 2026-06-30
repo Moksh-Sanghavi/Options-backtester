@@ -5,15 +5,38 @@
  * cues (row tint + coloured PnL). Pagination is client-side over the already
  * fetched trade log.
  */
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronLeft, ChevronRight, Download } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { TradeLogRow } from "@/lib/api";
+import { CsvColumn, downloadCsv, rowsToCsv } from "@/lib/export-csv";
 import { formatINR, formatNumber } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 const PAGE_SIZE = 12;
+
+/** Column layout for the exported CSV — one entry per TradeLogRow field. */
+const CSV_COLUMNS: CsvColumn<TradeLogRow>[] = [
+  { header: "Trade ID", value: (r) => r.trade_id },
+  { header: "Strategy", value: (r) => r.strategy },
+  { header: "Date", value: (r) => r.date },
+  { header: "Leg ID", value: (r) => r.leg_id },
+  { header: "Right", value: (r) => r.right },
+  { header: "Strike", value: (r) => r.strike },
+  { header: "Direction", value: (r) => r.direction },
+  { header: "Expiry", value: (r) => r.expiry },
+  { header: "Entry Time", value: (r) => r.entry_time ?? "" },
+  { header: "Exit Time", value: (r) => r.exit_time ?? "" },
+  { header: "Entry Premium", value: (r) => r.entry_premium },
+  { header: "Exit Premium", value: (r) => r.exit_premium },
+  { header: "Premium Change", value: (r) => r.premium_change },
+  { header: "Lots", value: (r) => r.lots },
+  { header: "Lot Size", value: (r) => r.lot_size },
+  { header: "Margin Blocked", value: (r) => r.margin_blocked },
+  { header: "Net PnL (INR)", value: (r) => r.net_pnl_inr },
+  { header: "Exit Reason", value: (r) => r.exit_reason },
+];
 
 interface TradeLogTableProps {
   rows: TradeLogRow[];
@@ -40,13 +63,27 @@ export function TradeLogTable({ rows }: TradeLogTableProps) {
     [rows, safePage],
   );
 
+  const handleExport = () => {
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+    downloadCsv(`tradelog-${stamp}.csv`, rowsToCsv(rows, CSV_COLUMNS));
+  };
+
   return (
     <div className="glass-surface overflow-hidden rounded-xl">
       <div className="flex items-center justify-between border-b border-border px-4 py-3">
         <h3 className="text-sm font-semibold">Trade Log</h3>
-        <span className="text-xs text-muted-foreground">
-          {rows.length} executions
-        </span>
+        <div className="flex items-center gap-3">
+          <span className="text-xs text-muted-foreground">
+            {rows.length} executions
+          </span>
+          {/* Only offer the export once a completed backtest has trades. */}
+          {rows.length > 0 && (
+            <Button size="sm" variant="outline" onClick={handleExport}>
+              <Download className="size-4" />
+              Export CSV
+            </Button>
+          )}
+        </div>
       </div>
 
       <div className="overflow-x-auto">

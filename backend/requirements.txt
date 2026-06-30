@@ -21,3 +21,6 @@ pandas>=2.2
 pyarrow>=18.1                      # Parquet I/O
 scipy>=1.14                        # Black-Scholes IV (brentq, norm)
 numpy>=2.1
+
+# --- Tests ---
+pytest>=8.3                        # golden-master engine tests (see tests/)

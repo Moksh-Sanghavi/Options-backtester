@@ -5,7 +5,7 @@
  * dashboard. Hidden on small screens where the layout stacks vertically.
  */
 import {
-  Activity,
+  LineChart,
   Database,
   History,
   LayoutDashboard,
@@ -22,16 +22,14 @@ interface NavItem {
 
 const NAV_ITEMS: NavItem[] = [
   { icon: LayoutDashboard, label: "Dashboard", active: true },
-  { icon: History, label: "History" },
-  { icon: Database, label: "Datasets" },
-  { icon: Settings, label: "Settings" },
+
 ];
 
 export function AppSidebar() {
   return (
     <aside className="hidden md:flex w-16 shrink-0 flex-col items-center gap-2 border-r border-border bg-sidebar/60 py-4 backdrop-blur-xl">
       <div className="mb-4 flex size-10 items-center justify-center rounded-xl bg-primary/15 text-primary ring-1 ring-primary/30">
-        <Activity className="size-5" />
+        <LineChart className="size-5" />
       </div>
 
       <nav className="flex flex-1 flex-col items-center gap-1.5">

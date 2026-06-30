@@ -27,12 +27,34 @@ class Settings(BaseSettings):
     def dataset_paths(self, dataset: str) -> tuple[Path, Path]:
         """Return (options_path, spot_path) for a named dataset.
 
-        Convention: ``options_<dataset>.parquet`` and ``spot_<dataset>.parquet``
-        inside ``data_dir``.
+        Two layouts are supported, checked in this order:
+
+        * **Partitioned** (multi-year): a directory ``options_<dataset>/`` of
+          ``expiry=YYYY-MM-DD/data.parquet`` partitions. Preferred when present.
+        * **Single file** (legacy): ``options_<dataset>.parquet``.
+
+        Spot is always a single ``spot_<dataset>.parquet`` file.
         """
-        options = self.data_dir / f"options_{dataset}.parquet"
+        partitioned = self.data_dir / f"options_{dataset}"
+        options = partitioned if partitioned.is_dir() else self.data_dir / f"options_{dataset}.parquet"
         spot = self.data_dir / f"spot_{dataset}.parquet"
         return options, spot
+
+    def dataset_expiries(self, dataset: str) -> list[str]:
+        """List the expiry dates (YYYY-MM-DD) of a partitioned dataset, sorted.
+
+        Reads only directory names, so it is cheap — no data is loaded. Returns
+        an empty list for a non-partitioned (single-file) or missing dataset.
+        """
+        partitioned = self.data_dir / f"options_{dataset}"
+        if not partitioned.is_dir():
+            return []
+        expiries = [
+            child.name.split("=", 1)[1]
+            for child in partitioned.glob("expiry=*")
+            if child.is_dir() and "=" in child.name
+        ]
+        return sorted(expiries)
 
 
 settings = Settings()

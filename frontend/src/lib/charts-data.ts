@@ -141,17 +141,26 @@ export function generateChartSeries(
   const spotRange = spotBase * 0.062;
   let prevClose = spotBase;
 
-  // Running peak for drawdown.
-  let peakEquity = -Infinity;
+  // Running peak for drawdown. Seed at initial capital so a decline from the
+  // very first day is measured against the starting value — this matches the
+  // backend's max_drawdown (peak floored at initial_capital), so the chart's
+  // "Max DD %" callout equals the headline card.
+  let peakEquity = initialCapital;
   let troughIndex = 0;
-  let deepest = 0;
+  let deepestPct = 0;
 
   const points: DayPoint[] = dates.map((date, i) => {
     peakEquity = Math.max(peakEquity, equity[i]);
     const drawdownInr = equity[i] - peakEquity;
+    // Percent against *initial capital* — (drawdown / initialCapital) × 100 —
+    // NOT the running peak. This matches the backend's max-drawdown-% definition
+    // (analytics.py: `(drawdown / initial_capital).min() * 100`) so the chart's
+    // "Max DD %" callout/tooltip equals the headline card. Dividing by the
+    // running peak instead understates the % whenever equity has grown above
+    // the starting capital.
     const drawdownPct = (drawdownInr / initialCapital) * 100;
-    if (drawdownInr < deepest) {
-      deepest = drawdownInr;
+    if (drawdownPct < deepestPct) {
+      deepestPct = drawdownPct;
       troughIndex = i;
     }
 

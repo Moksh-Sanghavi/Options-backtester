@@ -12,6 +12,11 @@
 // backend directly.
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
 
+// Calendar bounds of the multi-year dataset (Jan 2023 – Feb 2026). Used to
+// constrain the date pickers so users can't select out-of-range days.
+export const DATA_MIN_DATE = "2023-01-01";
+export const DATA_MAX_DATE = "2026-02-28";
+
 /** Run mode selecting which strategies execute. */
 export type RunMode = "WALL_ONLY" | "ORB_ONLY" | "COMBINED";
 
@@ -19,6 +24,10 @@ export type RunMode = "WALL_ONLY" | "ORB_ONLY" | "COMBINED";
 export interface StrategyConfigInput {
   run_mode: RunMode;
   strategy_type: string;
+  // Per-strategy enable switches (take precedence over run_mode on the backend).
+  wall_enabled: boolean;
+  orb_enabled: boolean;
+  straddle_enabled: boolean;
   entry_time: string;
   exit_time: string;
   expiry_selection: string;
@@ -27,9 +36,34 @@ export interface StrategyConfigInput {
   iv_drop_threshold: number;
   required_anomalies: number;
   capital: number;
-  risk_per_trade_pct: number;
   lot_size: number;
   strike_step: number;
+  max_reentries: number;
+  // Per-strategy exit rules. Wall Reversion and ORB each carry their own
+  // stop-loss / trailing-stop / max-hold / take-profit (fractions, bars).
+  wall_stop_loss_pct: number;
+  wall_trailing_sl_pct: number;
+  wall_max_hold_bars: number;
+  wall_take_profit_pct: number;
+  orb_stop_loss_pct: number;
+  orb_trailing_sl_pct: number;
+  orb_max_hold_bars: number;
+  orb_take_profit_pct: number;
+  orb_max_reentries: number;
+  // Short Straddle exit rules (fixed breakeven-shift logic lives in the engine).
+  straddle_entry_time: string;
+  straddle_exit_time: string;
+  straddle_stop_loss_pct: number;
+  // Advanced Wall Reversion tuning ("More settings").
+  iv_scan_depth: number;
+  ema_period: number;
+  cooldown_minutes: number;
+  capital_deploy_pct: number;
+  // Legacy shared exit fields (optional; superseded by the per-strategy ones).
+  stop_loss_pct?: number;
+  trailing_sl_pct?: number;
+  max_hold_bars?: number;
+  take_profit_pct?: number;
 }
 
 /** Body for POST /api/backtest/start. */
@@ -113,13 +147,60 @@ export interface BacktestSummary {
   final_equity: number;
 }
 
+export interface BenchmarkPoint {
+  date: string;
+  equity: number;
+}
+
+/** Aggregate portfolio Greeks (and the underlying ref) for one trading day. */
+export interface GreeksPoint {
+  date: string;
+  delta: number;
+  gamma: number;
+  theta: number;
+  vega: number;
+  spot: number;
+}
+
 export interface ResultsResponse {
   task_id: string;
   status: string;
+  symbol: string;
   metrics: Record<string, number | string | null>;
   summary: BacktestSummary;
   equity_curve: EquityPoint[];
   trade_log: TradeLogRow[];
+  benchmark?: BenchmarkPoint[];
+  greeks?: GreeksPoint[];
+}
+
+/** A persisted backtest's metadata (history list row). */
+export interface RunSummary {
+  id: string;
+  created_at: string;
+  label: string;
+  dataset: string;
+  start_date: string | null;
+  end_date: string | null;
+  run_mode: string | null;
+  /** Human-readable strategy label (e.g. "Short Straddle"). Older runs may be null. */
+  strategy_type: string | null;
+  total_pnl: number | null;
+  total_trades: number | null;
+  total_days: number | null;
+}
+
+/** A full persisted run (metadata + stored config + results payload). */
+export interface StoredRun extends RunSummary {
+  config: StrategyConfigInput;
+  results: ResultsResponse;
+}
+
+export interface ConfigPreset {
+  id: string;
+  name: string;
+  created_at: string;
+  config: StrategyConfigInput;
 }
 
 /** Parse a JSON error body from FastAPI into a readable message. */
@@ -150,6 +231,31 @@ export async function fetchDatasets(): Promise<string[]> {
   if (!res.ok) throw await toError(res);
   const data = (await res.json()) as { datasets: string[] };
   return data.datasets;
+}
+
+/**
+ * GET the expiries available for a dataset, optionally bounded by a date range.
+ *
+ * When `start`/`end` are supplied the backend returns the contiguous block of
+ * monthly expiries the engine could trade over that range — exactly what the
+ * "Target Expiry" dropdown should offer. Returns `[]` for single-file datasets.
+ */
+export async function fetchDatasetExpiries(
+  dataset: string,
+  start?: string | null,
+  end?: string | null,
+): Promise<string[]> {
+  const params = new URLSearchParams();
+  if (start) params.set("start", start);
+  if (end) params.set("end", end);
+  const qs = params.toString();
+  const res = await fetch(
+    `${API_BASE_URL}/api/datasets/${encodeURIComponent(dataset)}/expiries${qs ? `?${qs}` : ""}`,
+    { cache: "no-store" },
+  );
+  if (!res.ok) throw await toError(res);
+  const data = (await res.json()) as { expiries: string[] };
+  return data.expiries;
 }
 
 /** POST a backtest request and return the enqueued task id. */
@@ -185,4 +291,61 @@ export async function getBacktestResults(
   });
   if (!res.ok) throw await toError(res);
   return res.json();
+}
+
+/** GET just the daily portfolio Greeks time-series for a completed task. */
+export async function getBacktestGreeks(taskId: string): Promise<GreeksPoint[]> {
+  const res = await fetch(`${API_BASE_URL}/api/backtest/greeks/${taskId}`, {
+    cache: "no-store",
+  });
+  if (!res.ok) throw await toError(res);
+  return ((await res.json()) as { greeks: GreeksPoint[] }).greeks;
+}
+
+// ── History ─────────────────────────────────────────────────────────────────
+/** List persisted runs (most recent first). */
+export async function fetchHistory(): Promise<RunSummary[]> {
+  const res = await fetch(`${API_BASE_URL}/api/history`, { cache: "no-store" });
+  if (!res.ok) throw await toError(res);
+  return ((await res.json()) as { runs: RunSummary[] }).runs;
+}
+
+/** Fetch one stored run with its full config + results. */
+export async function fetchRun(runId: string): Promise<StoredRun> {
+  const res = await fetch(`${API_BASE_URL}/api/history/${runId}`, { cache: "no-store" });
+  if (!res.ok) throw await toError(res);
+  return res.json();
+}
+
+/** Delete a stored run. */
+export async function deleteRun(runId: string): Promise<void> {
+  const res = await fetch(`${API_BASE_URL}/api/history/${runId}`, { method: "DELETE" });
+  if (!res.ok) throw await toError(res);
+}
+
+// ── Config presets ───────────────────────────────────────────────────────────
+/** List saved config presets. */
+export async function fetchPresets(): Promise<ConfigPreset[]> {
+  const res = await fetch(`${API_BASE_URL}/api/presets`, { cache: "no-store" });
+  if (!res.ok) throw await toError(res);
+  return ((await res.json()) as { presets: ConfigPreset[] }).presets;
+}
+
+/** Save (or overwrite by name) a config preset. */
+export async function savePreset(
+  name: string,
+  config: StrategyConfigInput,
+): Promise<void> {
+  const res = await fetch(`${API_BASE_URL}/api/presets`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, config }),
+  });
+  if (!res.ok) throw await toError(res);
+}
+
+/** Delete a saved preset. */
+export async function deletePreset(presetId: string): Promise<void> {
+  const res = await fetch(`${API_BASE_URL}/api/presets/${presetId}`, { method: "DELETE" });
+  if (!res.ok) throw await toError(res);
 }

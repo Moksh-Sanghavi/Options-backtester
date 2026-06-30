@@ -9,9 +9,11 @@ import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
 import { ConfigPanel } from "@/components/config-panel";
+import { HistoryMenu } from "@/components/history-menu";
 import { ResultsArea } from "@/components/results-area";
 import { useBacktest } from "@/hooks/use-backtest";
-import { BacktestRequest, fetchDatasets } from "@/lib/api";
+import { ThemeToggle } from "@/components/theme-toggle";
+import { BacktestRequest, fetchDatasets, fetchRun } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 const PHASE_LABEL: Record<string, string> = {
@@ -23,7 +25,21 @@ const PHASE_LABEL: Record<string, string> = {
 
 export function Dashboard() {
   const [datasets, setDatasets] = useState<string[]>([]);
-  const { phase, progress, results, error, run, reset } = useBacktest();
+  const { phase, progress, results, error, runState, run, reset, loadResults } =
+    useBacktest();
+
+  const handleLoadRun = (runId: string) => {
+    fetchRun(runId)
+      .then((stored) => {
+        loadResults(stored.results, stored.id);
+        toast.success("Loaded run", { description: stored.label });
+      })
+      .catch((err) =>
+        toast.error("Could not load run", {
+          description: err instanceof Error ? err.message : undefined,
+        }),
+      );
+  };
 
   useEffect(() => {
     fetchDatasets()
@@ -32,7 +48,7 @@ export function Dashboard() {
         toast.error("Could not load datasets", {
           description: err instanceof Error ? err.message : undefined,
         });
-        setDatasets(["dec2023"]);
+        setDatasets(["nifty"]);
       });
   }, []);
 
@@ -55,13 +71,14 @@ export function Dashboard() {
       <header className="flex items-center justify-between border-b border-border bg-background/50 px-6 py-3.5 backdrop-blur-xl">
         <div>
           <h1 className="text-sm font-semibold tracking-tight">
-            Nifty Options Backtester
+            Options Backtester  | Shatrunjaya Investment Managers LLP
           </h1>
-          <p className="text-xs text-muted-foreground">
-            Wall Reversion · Opening Range Breakout
-          </p>
         </div>
-        <StatusPill phase={phase} />
+        <div className="flex items-center gap-3">
+          <ThemeToggle />
+          <HistoryMenu onLoad={handleLoadRun} />
+          <StatusPill phase={phase} />
+        </div>
       </header>
 
       <div className="grid min-h-0 flex-1 lg:grid-cols-[380px_1fr]">
@@ -78,6 +95,7 @@ export function Dashboard() {
             progress={progress}
             results={results}
             error={error}
+            runState={runState}
             onReset={reset}
           />
         </div>

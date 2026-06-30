@@ -9,11 +9,26 @@ venv/
 .ruff_cache/
 
 # ── Data artifacts ──────────────────────────────────────────────────────
-# Parquet datasets ARE committed (small, ~16 MB) so a fresh clone runs right away.
-# If you ever add a very large dataset (>50 MB per file), ignore that one
-# specifically here, or use Git LFS for it instead.
-*.xlsx
-*.png
+# Raw source CSVs (several GB each — never commit)
+"Nifty Options Data (Monthly Expiries)/"
+"Bank Nifty Options Data (Monthly Expiries)/"
+"Nifty Spot.csv"
+"Bank Nifty Spot.csv"
+
+# Old-path CSVs (legacy ignore entries)
+/Options Data (Monthly Expiries from Jan 2023 - Feb 2026)/
+/Spot (Jan 2023 - Feb 2026).csv
+
+# Converted Parquet data (tracked via Git LFS — see below)
+backend/data/options_nifty/
+backend/data/options_banknifty/
+backend/data/spot_nifty.parquet
+backend/data/spot_banknifty.parquet
+
+# SQLite history DB (local state, not shared)
+backend/data/backtester.db
+backend/data/backtester.db-wal
+backend/data/backtester.db-shm
 
 # ── Redis runtime snapshot ──────────────────────────────────────────────
 *.rdb

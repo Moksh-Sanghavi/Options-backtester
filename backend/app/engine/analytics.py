@@ -68,6 +68,10 @@ class PerformanceTracker:
                         "lots": leg.num_lots,
                         "lot_size": leg.lot_size,
                         "margin_blocked": round(leg.margin_blocked, 0),
+                        # Trade-level peak *concurrent* margin (same value on every
+                        # leg of the trade); aggregated with max, never summed, so
+                        # recycled re-entry capital is not double-counted.
+                        "trade_peak_margin": round(trade.peak_margin_deployed, 0),
                         "net_pnl_inr": round(leg.net_pnl, 2),
                         "exit_reason": leg.exit_reason,
                     }
@@ -81,13 +85,24 @@ class PerformanceTracker:
             return pd.Series(dtype=float)
         return self.trade_log.groupby("date")["net_pnl_inr"].sum()
 
-    def max_drawdown(self, equity_curve: pd.Series) -> Tuple[float, float]:
-        """Maximum drawdown of a daily-PnL series in INR and percent."""
-        cumulative = equity_curve.cumsum()
-        peak = cumulative.cummax()
-        drawdown = cumulative - peak
+    def max_drawdown(
+        self, daily_pnl: pd.Series, initial_capital: float
+    ) -> Tuple[float, float]:
+        """Maximum drawdown of a daily-PnL series in INR and as % of initial capital.
+
+        The drawdown amount is the deepest drop below the running peak **equity**
+        (initial_capital + cumulative PnL); the percentage is taken against the
+        **initial capital** denominator. This matches the running-drawdown series
+        in ``build_equity_curve`` so the headline card and the drawdown chart
+        agree. (initial_capital > 0, so there is no divide-by-zero.)
+        """
+        equity = initial_capital + daily_pnl.cumsum()
+        # Seed the running peak with initial_capital (matches build_equity_curve,
+        # whose peak starts at capital before day one) so card == chart exactly.
+        peak = equity.cummax().clip(lower=initial_capital)
+        drawdown = equity - peak
         mdd_inr = drawdown.min()
-        mdd_pct = (drawdown / peak.replace(0, np.nan)).min() * 100
+        mdd_pct = (drawdown / initial_capital).min() * 100
         return mdd_inr, mdd_pct
 
     # ── Tear sheet ──────────────────────────────────────────────────────────
@@ -109,7 +124,11 @@ class PerformanceTracker:
             .agg(
                 date=("date", "first"),
                 net_pnl_inr=("net_pnl_inr", "sum"),
-                total_margin=("margin_blocked", "sum"),
+                # Peak concurrent margin per day = max of the per-trade peak (one
+                # value per trade), NOT the sum of every leg's blocked margin.
+                # Summing stacked re-entries inflated this to ~32L; the live
+                # tracker caps it at the daily ceiling.
+                total_margin=("trade_peak_margin", "max"),
             )
             .reset_index()
         )
@@ -141,7 +160,7 @@ class PerformanceTracker:
         roc_pct = total_net_pnl / initial_capital * 100
 
         daily_pnl = self.compute_daily_pnl()
-        mdd_inr, mdd_pct = self.max_drawdown(daily_pnl)
+        mdd_inr, mdd_pct = self.max_drawdown(daily_pnl, initial_capital)
         mdd_points = mdd_inr / self.lot_size
 
         sl_hits = log[log["exit_reason"].str.contains("Stop Loss Hit", na=False)]
@@ -173,7 +192,7 @@ class PerformanceTracker:
             "Peak Margin Deployed (₹)": round(peak_margin, 0),
             "Max Drawdown (₹)": round(mdd_inr, 2),
             "Max Drawdown (Points)": round(mdd_points, 2),
-            "Max Drawdown (% Margin)": round(mdd_pct, 2),
+            "Max Drawdown (%)": round(mdd_pct, 2),
             "Stop Losses Hit (Total)": sl_count,
             "Sharpe Ratio (Daily)": round(sharpe, 3),
             "Initial Capital (₹)": initial_capital,
@@ -201,7 +220,7 @@ class PerformanceTracker:
         """Daily equity curve with running drawdown, ready for charting.
 
         Each point: date, daily pnl, cumulative pnl, equity, drawdown (INR),
-        drawdown_pct (from running peak equity).
+        drawdown_pct (against initial capital).
         """
         daily_pnl = self.compute_daily_pnl()
         points: List[Dict[str, Any]] = []
@@ -213,7 +232,7 @@ class PerformanceTracker:
             equity = initial_capital + cumulative
             peak = max(peak, equity)
             drawdown = equity - peak
-            drawdown_pct = (drawdown / peak * 100) if peak else 0.0
+            drawdown_pct = (drawdown / initial_capital * 100) if initial_capital else 0.0
             points.append(
                 {
                     "date": pd.Timestamp(date).strftime("%Y-%m-%d"),
@@ -270,7 +289,7 @@ class PerformanceTracker:
             "total_pnl": metrics.get("Total Net PnL (₹)", 0.0),
             "total_pnl_points": metrics.get("Total Net PnL (Points)", 0.0),
             "max_drawdown_inr": metrics.get("Max Drawdown (₹)", 0.0),
-            "max_drawdown_pct": metrics.get("Max Drawdown (% Margin)", 0.0),
+            "max_drawdown_pct": metrics.get("Max Drawdown (%)", 0.0),
             "trade_win_rate": metrics.get("Trade Win Rate (%)", 0.0),
             "daily_win_rate": metrics.get("Daily Win Rate (%)", 0.0),
             "sharpe": metrics.get("Sharpe Ratio (Daily)", 0.0),
